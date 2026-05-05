@@ -468,7 +468,11 @@ html,body{
 <script>
 const {useState,useEffect}=React;
 const h=React.createElement;
-const SK='iph_cardnote2_v1';
+
+const SUPABASE_URL = "https://ppilaxrrvyqjwsquhfpa.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_OSktxzS6LZyognjGMt7v1A_QTBtiQvO";
+
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);  
 
 const CAT_ICON={Behavioral:'♥',UX:'✦',Product:'✿',Case:'★',Motivation:'◆',General:'·'};
 const CAT_COLOR={Behavioral:'var(--pink)',UX:'var(--teal)',Product:'var(--green)',Case:'var(--orange)',Motivation:'var(--navy)',General:'var(--muted)'};
@@ -487,8 +491,75 @@ const SEED=[
 ];
 
 const CATS=['All','Behavioral','UX','Product','Case','Motivation','General'];
-function load(){try{const r=localStorage.getItem(SK);if(r)return JSON.parse(r);}catch(e){}return SEED;}
-function save(c){try{localStorage.setItem(SK,JSON.stringify(c));}catch(e){}}
+async function loadCardsFromSupabase() {
+  const { data, error } = await supabaseClient
+    .from('cards')
+    .select('*')
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('Error loading cards:', error);
+    return SEED;
+  }
+
+  return data && data.length > 0 ? data : SEED;
+}
+
+async function addCardToSupabase(card) {
+  const { data, error } = await supabaseClient
+    .from('cards')
+    .insert([
+      {
+        title: card.title,
+        category: card.category,
+        content: card.content
+      }
+    ])
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error adding card:', error);
+    return null;
+  }
+
+  return data;
+}
+
+async function updateCardInSupabase(card) {
+  const { data, error } = await supabaseClient
+    .from('cards')
+    .update({
+      title: card.title,
+      category: card.category,
+      content: card.content,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', card.id)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error updating card:', error);
+    return null;
+  }
+
+  return data;
+}
+
+async function deleteCardFromSupabase(id) {
+  const { error } = await supabaseClient
+    .from('cards')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error deleting card:', error);
+    return false;
+  }
+
+  return true;
+}
 
 function Toast({msg}){return h('div',{className:'toast'},msg);}
 
@@ -583,7 +654,8 @@ function PracticeView({cards,onExit}){
 }
 
 function App(){
-  const[cards,setCards]=useState(load);
+  const[cards,setCards]=useState([]);
+  const[loaded,setLoaded]=useState(false);
   const[search,setSearch]=useState('');
   const[cat,setCat]=useState('All');
   const[view,setView]=useState('grid');
@@ -591,7 +663,15 @@ function App(){
   const[showAdd,setShowAdd]=useState(false);
   const[toast,setToast]=useState(null);
 
-  useEffect(()=>{save(cards);},[cards]);
+  useEffect(() => {
+    async function initCards() {
+      const serverCards = await loadCardsFromSupabase();
+      setCards(serverCards);
+      setLoaded(true);
+    }
+
+    initCards();
+  }, []);
 
   const filtered=cards.filter(c=>{
     const mc=cat==='All'||c.category===cat;
@@ -599,9 +679,55 @@ function App(){
     return mc&&(!q||c.title.toLowerCase().includes(q)||c.content.toLowerCase().includes(q));
   });
 
-  function addCard(card){setCards(p=>[card,...p]);setShowAdd(false);flash('card saved ♥');}
-  function updateCard(u){setCards(p=>p.map(c=>c.id===u.id?u:c));setSel(u);}
-  function deleteCard(id){setCards(p=>p.filter(c=>c.id!==id));setView('grid');setSel(null);flash('deleted');}
+  if (!loaded) {
+    return h('div', {
+      style: {
+        padding: '40px',
+        fontFamily: "'DM Mono', monospace",
+        color: 'var(--muted)'
+      }
+    }, 'Loading cards...');
+  }
+
+  async function addCard(card) {
+    const savedCard = await addCardToSupabase(card);
+  
+    if (!savedCard) {
+      flash('failed to save');
+      return;
+    }
+  
+    setCards(p => [savedCard, ...p]);
+    setShowAdd(false);
+    flash('card saved ♥');
+  }
+  
+  async function updateCard(u) {
+    const savedCard = await updateCardInSupabase(u);
+  
+    if (!savedCard) {
+      flash('failed to update');
+      return;
+    }
+  
+    setCards(p => p.map(c => c.id === savedCard.id ? savedCard : c));
+    setSel(savedCard);
+    flash('updated ♥');
+  }
+  
+  async function deleteCard(id) {
+    const success = await deleteCardFromSupabase(id);
+  
+    if (!success) {
+      flash('failed to delete');
+      return;
+    }
+  
+    setCards(p => p.filter(c => c.id !== id));
+    setView('grid');
+    setSel(null);
+    flash('deleted');
+  }
   function flash(msg){setToast(msg);setTimeout(()=>setToast(null),2200);}
 
   const PracticeBar=()=>h('div',{className:'header'},
